@@ -397,7 +397,7 @@ Phase                        Jan  Feb  Feb  Mar  Mar  Apr
         Each block represents approximately one week.
 ```
 
-**Phase 1 — Literature Review and Scoping (January 31 – February 13)**
+**Phase 1 — Literature Review and Scoping (January 31 – April 5)**
 
 The first two weeks were dedicated to surveying the academic and technical landscape of speech emotion recognition. This included reading foundational papers on wav2vec 2.0, HuBERT, and WavLM; reviewing the IEMOCAP and RAVDESS dataset documentation; examining the SUPERB benchmark leaderboard; and exploring existing open-source SER implementations on HuggingFace and GitHub. The acoustic psychophysiology of stress was also reviewed to understand the theoretical basis for jitter, shimmer, and F0 as stress correlates. By the end of this phase, the project scope was defined: a real-time, single-speaker system targeting consumer hardware without requiring model training, with a secondary voice stress analysis module as a distinguishing feature.
 
