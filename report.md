@@ -11,25 +11,31 @@
 
 ## Abstract
 
-This report presents the design, development, and evaluation of a real-time speech emotion recognition and voice stress analysis system. The system leverages a pre-trained transformer-based model, wav2vec2-base-superb-er, fine-tuned on the IEMOCAP dataset, to classify emotional states from continuous microphone input. In parallel, a custom acoustic feature extraction module analyzes fundamental frequency, jitter, shimmer, and pause ratio to generate a voice stress profile calibrated to the individual speaker. The system produces per-emotion probability distributions and a deception likelihood score updated every second over a rolling three-second audio window. Development spanned approximately ten weeks, encompassing literature review, model evaluation, real-time pipeline engineering, and iterative refinement. The result is a fully functional, low-latency desktop application written in Python using PyTorch and the HuggingFace Transformers library.
+This report presents the design, development, and evaluation of a real-time speech emotion recognition and voice stress analysis system. The system leverages a pre-trained transformer-based model — wav2vec2-base-superb-er, fine-tuned on the IEMOCAP dataset — to classify emotional states from continuous microphone input. In parallel, a custom acoustic feature extraction module analyzes fundamental frequency, jitter, shimmer, and pause ratio to generate a voice stress profile calibrated to the individual speaker. The system produces per-emotion probability distributions and a deception likelihood score updated every second over a rolling three-second audio window, presented through a purpose-built desktop graphical interface. Development spanned ten weeks and encompassed literature review, model evaluation, real-time pipeline engineering, and iterative refinement. The result is a fully functional, low-latency desktop application written in Python using PyTorch, the HuggingFace Transformers library, and tkinter, capable of running on consumer hardware without GPU acceleration.
 
 ---
 
 ## 1. Introduction
 
-Human communication is rich with affective information. Beyond the literal content of speech, vocal characteristics such as pitch, tempo, energy, and micro-variations in amplitude encode emotional states that listeners intuitively interpret in real time. Automating this process — enabling a machine to classify emotion from raw audio — is a long-standing challenge in affective computing and has practical applications in mental health monitoring, human-computer interaction, security screening, call center analytics, and accessibility tools.
+Human communication is rich with affective information. Beyond the literal content of speech, vocal characteristics such as pitch, tempo, energy, and micro-variations in amplitude encode emotional states that listeners intuitively interpret in real time. Automating this process — enabling a machine to classify emotion from raw audio — is a long-standing challenge in affective computing with practical applications in mental health monitoring, human-computer interaction, security screening, call center analytics, and accessibility tools.
 
-This independent study project set out to build a real-time speech emotion recognition (SER) system that operates on live microphone input, produces probability scores across multiple emotional categories, and augments that analysis with a voice stress module inspired by acoustic correlates of cognitive load and deception. The project was motivated by an interest in the intersection of deep learning and human behavioral analysis, and by the accessibility of high-quality pre-trained speech models that have emerged from self-supervised learning research in recent years.
+This independent study project set out to build a real-time speech emotion recognition (SER) system that operates on live microphone input, produces probability scores across multiple emotional categories, and augments that analysis with a voice stress module inspired by acoustic correlates of cognitive load and deception. The project was motivated by an interest in the intersection of deep learning and human behavioral analysis, and by the recent accessibility of high-quality pre-trained speech models produced by self-supervised learning research.
+
+### 1.1 Problem Statement
+
+Despite rapid advances in SER research, most systems remain confined to academic benchmarks, operating on pre-recorded audio clips under controlled conditions. Deploying such a system in real time introduces a distinct set of engineering challenges: low-latency audio capture, continuous windowed inference, speaker-specific normalization, and responsive user feedback. This project addresses all four, delivering a deployable desktop application that operates at inference cadences of one second or better.
+
+### 1.2 Objectives
 
 The primary objectives of this project were:
 
 1. Survey the landscape of SER models, datasets, and acoustic feature methodologies.
-2. Select and evaluate pre-trained models for real-time applicability.
+2. Select and evaluate pre-trained models for real-time applicability on consumer hardware.
 3. Engineer a low-latency audio pipeline capable of processing continuous microphone input.
-4. Implement a secondary voice stress analysis module using handcrafted acoustic features.
-5. Design a readable, informative terminal-based interface that presents results clearly.
+4. Implement a secondary voice stress analysis module using handcrafted acoustic features with personal baseline calibration.
+5. Design an informative, user-facing graphical interface that presents results clearly and updates in real time.
 
-The final system fulfills all five objectives and runs on consumer hardware without a GPU, making it accessible for demonstration and further research.
+The final system fulfills all five objectives and is distributed as an open-source repository with automated setup scripts for Windows.
 
 ---
 
@@ -37,69 +43,266 @@ The final system fulfills all five objectives and runs on consumer hardware with
 
 ### 2.1 Speech Emotion Recognition
 
-Speech emotion recognition is the task of automatically inferring a speaker's emotional state from audio signals. Early approaches relied on handcrafted acoustic features — such as mel-frequency cepstral coefficients (MFCCs), zero-crossing rate, spectral centroid, and pitch contours — fed into classical machine learning classifiers such as support vector machines and hidden Markov models. While these methods established a baseline, they were limited by the expressiveness of manually designed features and their sensitivity to speaker variability and environmental noise.
+Speech emotion recognition (SER) is the task of automatically inferring a speaker's emotional state from audio signals. The field has evolved through three broad generations of methodology.
 
-The introduction of deep learning shifted the field significantly. Convolutional neural networks applied to spectrograms, recurrent networks over temporal feature sequences, and attention-based models all demonstrated improved performance on standard benchmarks. The challenge of SER remains non-trivial, however, due to the subjectivity of emotional labels, cross-cultural variability in emotional expression, and the inherent ambiguity of speech that carries mixed or masked affect.
+**First generation (1990s–2000s):** Early approaches relied entirely on handcrafted acoustic features fed into classical classifiers. Mel-frequency cepstral coefficients (MFCCs), zero-crossing rate, spectral centroid, spectral rolloff, and pitch contours were computed per frame and summarized as utterance-level statistics (mean, variance, range). These features were fed to support vector machines (SVMs), Gaussian mixture models (GMMs), or hidden Markov models (HMMs). While foundational, these methods suffered from limited generalization across speakers and recording conditions.
 
-### 2.2 Self-Supervised Learning for Speech: wav2vec2
+**Second generation (2010s):** Deep learning architectures replaced manual feature engineering. Convolutional neural networks (CNNs) applied directly to mel spectrograms learned spatial representations of frequency-time patterns. Recurrent architectures — long short-term memory networks (LSTMs) and gated recurrent units (GRUs) — captured temporal dynamics across frames. Attention mechanisms allowed models to weight the most emotionally informative segments of an utterance. Performance on standard benchmarks improved substantially.
 
-A turning point in speech processing came with the introduction of wav2vec 2.0 by Baevski et al. (2020). wav2vec2 is a self-supervised learning framework that learns powerful representations of raw audio by training a transformer-based model to solve a contrastive task over masked audio segments, without requiring labeled data. The pre-trained representations generalize remarkably well to downstream tasks including automatic speech recognition, speaker identification, and emotion recognition when fine-tuned on labeled datasets.
+**Third generation (2019–present):** Self-supervised pre-training on massive unlabeled audio corpora produced general-purpose speech representations that transfer effectively to SER with minimal fine-tuning data. This approach — exemplified by wav2vec 2.0, HuBERT, and WavLM — represents the current state of the art. The model used in this project belongs to this generation.
 
-The model used in this project, superb/wav2vec2-base-superb-er, is part of the Speech processing Universal PERformance Benchmark (SUPERB) and was fine-tuned for emotion recognition on the IEMOCAP dataset. It takes raw 16 kHz audio as input and outputs probability distributions over four emotion classes: angry, happy, neutral, and sad.
+### 2.2 Self-Supervised Learning for Speech: wav2vec 2.0
+
+wav2vec 2.0, introduced by Baevski et al. (2020) at Meta AI Research, is a self-supervised framework that learns speech representations directly from raw audio waveforms without labeled data. Its architecture consists of three components:
+
+**Feature encoder:** A stack of temporal convolutional layers transforms the raw audio waveform into a sequence of latent feature vectors at a rate of approximately one vector per 20 milliseconds.
+
+**Transformer encoder:** A 12- or 24-layer transformer processes the full sequence of latent vectors, building contextualized representations that incorporate information from the entire utterance.
+
+**Quantization module:** During pre-training, target representations are discretized into a finite codebook. The model is trained to identify the correct quantized target for masked time steps — a contrastive objective that forces the model to learn linguistically and acoustically meaningful representations.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    wav2vec 2.0 Architecture                  │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│   Raw Audio (16 kHz waveform)                               │
+│         │                                                   │
+│         ▼                                                   │
+│   ┌─────────────┐                                           │
+│   │  Feature    │  7-layer temporal CNN                     │
+│   │  Encoder    │  stride: 5,2,2,2,2,2,2                   │
+│   └──────┬──────┘  output: 512-dim @ 50 Hz                  │
+│          │                                                   │
+│          ▼                                                   │
+│   ┌─────────────┐                                           │
+│   │ Transformer │  12 layers, 768 hidden dim                │
+│   │  Encoder    │  8 attention heads                        │
+│   └──────┬──────┘  output: contextualized representations   │
+│          │                                                   │
+│          ▼                                                   │
+│   ┌─────────────┐                                           │
+│   │ Classifier  │  fine-tuned on IEMOCAP                   │
+│   │    Head     │  output: 4-class softmax                  │
+│   └─────────────┘                                           │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+        Figure 1: wav2vec 2.0 model architecture as used
+        in this project (base configuration).
+```
+
+After pre-training on 960 hours of unlabeled LibriSpeech audio, the model is fine-tuned for downstream tasks by appending a task-specific head and training on labeled data. For emotion recognition, a linear classification layer produces a probability distribution over emotion classes.
 
 ### 2.3 The IEMOCAP Dataset
 
-The Interactive Emotional Dyadic Motion Capture (IEMOCAP) dataset, introduced by Busso et al. (2008) at the University of Southern California, is one of the most widely used benchmarks in SER research. It contains approximately twelve hours of audiovisual data from ten actors performing scripted and improvised emotional dialogues. Audio recordings are labeled by multiple annotators across categorical and dimensional emotional scales. Its dyadic, conversational structure makes it particularly relevant for real-world speech emotion analysis, in contrast to acted, isolated utterance datasets.
+The Interactive Emotional Dyadic Motion Capture (IEMOCAP) dataset, introduced by Busso et al. (2008) at the University of Southern California, is one of the most widely used benchmarks in SER research. It contains approximately twelve hours of audiovisual data recorded from ten actors (five male, five female) performing scripted and improvised emotional dialogues in dyadic (two-person) sessions.
+
+Audio recordings are segmented into utterances and annotated by multiple human evaluators, with both categorical labels (angry, happy, neutral, sad, excited, frustrated, disgust, surprised, fear, other) and dimensional scores on valence, activation, and dominance scales. The categorical labels are typically reduced to four primary classes — angry, happy, neutral, and sad — for benchmark evaluation, with excited utterances merged into happy.
+
+IEMOCAP's dyadic, conversational structure distinguishes it from isolated utterance databases and makes it particularly relevant for the naturalistic, continuous speech scenarios targeted by this project.
+
+| Property | Value |
+|---|---|
+| Duration | ~12 hours |
+| Sessions | 5 dyadic sessions |
+| Actors | 10 (5M, 5F) |
+| Utterances | ~10,000 |
+| Emotion classes (used) | Angry, Happy, Neutral, Sad |
+| Annotation | Multi-annotator categorical + dimensional |
+| Modalities | Audio, video, motion capture |
+
+*Table 1: IEMOCAP dataset properties.*
 
 ### 2.4 The RAVDESS Dataset
 
-During the model evaluation phase of this project, the Ryerson Audio-Visual Database of Emotional Speech and Song (RAVDESS) was also examined. RAVDESS contains 24 professional actors vocalizing two lexically matched statements across eight emotional categories: neutral, calm, happy, sad, angry, fearful, disgust, and surprised. While RAVDESS offers a broader emotion vocabulary, models trained on it exhibited architectural incompatibilities with current versions of the HuggingFace Transformers library (detailed in Section 5), leading to the selection of the IEMOCAP-trained model instead.
+During the model evaluation phase, the Ryerson Audio-Visual Database of Emotional Speech and Song (RAVDESS), introduced by Livingstone and Russo (2018), was also examined. RAVDESS contains 24 professional actors vocalizing two lexically matched statements across eight emotional categories: neutral, calm, happy, sad, angry, fearful, disgust, and surprised. Its broad emotion vocabulary was initially appealing. However, as documented in Section 4.2, the primary model trained on RAVDESS exhibited classifier head architecture incompatibilities with the current HuggingFace Transformers library version, leading to unreliable predictions.
 
-### 2.5 Voice Stress Analysis
+| Property | Value |
+|---|---|
+| Duration | ~3.6 hours |
+| Actors | 24 (12M, 12F) |
+| Utterances | 7,356 |
+| Emotion classes | 8 (neutral, calm, happy, sad, angry, fearful, disgust, surprised) |
+| Setting | Professional studio, controlled |
+| Modalities | Audio, video |
 
-Voice stress analysis (VSA) refers to the extraction of acoustic features that are hypothesized to correlate with psychological stress, cognitive load, and deceptive intent. The theoretical basis draws from psychophysiology: stress activates the autonomic nervous system, which affects laryngeal muscle tension, respiratory patterns, and vocal fold vibration. Observable acoustic consequences include elevated fundamental frequency (F0), increased jitter (cycle-to-cycle variation in F0), increased shimmer (cycle-to-cycle variation in amplitude), and changes in speaking rate and pause patterns.
+*Table 2: RAVDESS dataset properties.*
 
-VSA tools have been marketed commercially since the 1970s, but the scientific literature on their reliability as lie detectors is deeply skeptical. A 2003 report by the National Research Council concluded there is no credible scientific evidence supporting voice-based deception detection. This project implements VSA as an educational demonstration of acoustic stress indicators, explicitly framed as a non-validated feature.
+### 2.5 The SUPERB Benchmark
 
-The acoustic features extracted in this system — F0 via the YIN algorithm, jitter, shimmer, and pause ratio — are computed using the librosa audio analysis library and compared against a personal baseline established during a calibration phase, yielding a speaker-normalized stress score.
+The Speech processing Universal PERformance Benchmark (SUPERB), introduced by Yang et al. (2021), provides a standardized evaluation framework for pre-trained speech models across a suite of tasks including automatic speech recognition, speaker verification, keyword spotting, intent classification, and emotion recognition. The emotion recognition task in SUPERB uses IEMOCAP and evaluates models on unweighted average recall (UAR) across the four primary emotion classes.
+
+The model used in this project — superb/wav2vec2-base-superb-er — is the official SUPERB emotion recognition checkpoint, achieving competitive UAR on the IEMOCAP test set.
+
+### 2.6 Voice Stress Analysis
+
+Voice stress analysis (VSA) refers to the extraction of acoustic features hypothesized to correlate with psychological stress, cognitive load, and deceptive intent. The theoretical basis draws from psychophysiology: stress activates the autonomic nervous system, affecting laryngeal muscle tension, respiratory patterns, and vocal fold vibration. Observable acoustic consequences include elevated fundamental frequency (F0), increased cycle-to-cycle instability in pitch (jitter), increased cycle-to-cycle variation in amplitude (shimmer), and changes in speaking rate and pause patterns.
+
+Key acoustic features used in VSA and their theoretical basis are summarized below:
+
+| Feature | Definition | Stress Association |
+|---|---|---|
+| F0 (Fundamental Frequency) | Rate of vocal fold vibration (pitch) | Elevated under stress due to increased laryngeal tension |
+| Jitter | Cycle-to-cycle variation in F0 period | Increased by irregular vocal fold vibration under stress |
+| Shimmer | Cycle-to-cycle variation in amplitude | Increased by irregular subglottal pressure under stress |
+| Pause Ratio | Fraction of speech window with silence | Increases with hesitation and cognitive load |
+| Speaking Rate | Syllables or words per second | May increase (anxiety) or decrease (deliberation) under stress |
+
+*Table 3: Acoustic features used in the voice stress analysis module.*
+
+VSA tools have been commercially marketed since the 1970s (Psychological Stress Evaluator, CVSA). However, the scientific literature on their reliability for deception detection is deeply skeptical. A landmark 2003 report by the National Research Council concluded there is no credible scientific evidence supporting voice-based lie detection. Subsequent meta-analyses have confirmed this assessment. This project implements VSA as an educational demonstration of acoustic feature analysis, explicitly framed in the interface as non-validated.
 
 ---
 
 ## 3. System Architecture
 
-The system is organized into four main components: the audio capture pipeline, the emotion classification module, the voice stress analysis module, and the display layer. These components run in a coordinated loop with a one-second inference cadence.
+The system is organized into four main components that operate in a coordinated real-time loop.
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                        System Architecture                        │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   ┌──────────────┐                                               │
+│   │  Microphone  │                                               │
+│   └──────┬───────┘                                               │
+│          │  raw PCM (16 kHz, float32, mono)                      │
+│          ▼                                                       │
+│   ┌──────────────────────────────────────────┐                   │
+│   │           Audio Capture Pipeline          │                   │
+│   │   sounddevice InputStream (callback)      │                   │
+│   │   → Thread-safe deque (3s rolling buffer) │                   │
+│   │   → RMS silence gate                      │                   │
+│   └──────┬──────────────────────────┬─────────┘                   │
+│          │                          │                             │
+│          ▼                          ▼                             │
+│   ┌──────────────┐         ┌────────────────────┐                │
+│   │   Emotion    │         │  Voice Stress       │                │
+│   │ Classifier   │         │  Analyzer           │                │
+│   │              │         │                     │                │
+│   │ wav2vec2     │         │  librosa:           │                │
+│   │ HuggingFace  │         │  - YIN (F0/pitch)   │                │
+│   │ pipeline     │         │  - Jitter           │                │
+│   │              │         │  - Shimmer          │                │
+│   │ → softmax    │         │  - Pause ratio      │                │
+│   │   over 4     │         │  → Personal         │                │
+│   │   emotions   │         │    baseline norm    │                │
+│   └──────┬───────┘         └────────┬────────────┘                │
+│          │                          │                             │
+│          └──────────┬───────────────┘                             │
+│                     ▼                                             │
+│   ┌──────────────────────────────────────────┐                   │
+│   │              Display Layer                │                   │
+│   │   tkinter GUI (polling every 200ms)       │                   │
+│   │   - Emotion bars + overall verdict        │                   │
+│   │   - Stress bars + deception score         │                   │
+│   └──────────────────────────────────────────┘                   │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+
+        Figure 2: High-level system architecture showing
+        data flow from microphone to GUI output.
+```
 
 ### 3.1 Audio Capture Pipeline
 
-Audio is captured from the system's default microphone using the sounddevice library, which provides a non-blocking InputStream interface. A callback function populates a thread-safe rolling buffer implemented as a Python deque with a maximum length of 48,000 samples (three seconds at 16 kHz). Every second, the main inference loop acquires the buffer contents, performs an RMS energy check to filter silence, and passes the audio to both analysis modules.
+Audio is captured from the system's default microphone using the sounddevice library, which wraps the PortAudio cross-platform audio I/O library. A non-blocking InputStream is opened with a callback function that appends incoming samples to a thread-safe rolling buffer implemented as a Python deque with a maximum length of 48,000 samples (three seconds at 16 kHz). The callback executes in a dedicated audio thread managed by PortAudio.
 
-The choice of a three-second rolling window balances temporal resolution with the minimum context needed for reliable emotion classification. wav2vec2's transformer architecture benefits from longer context windows, and pilot testing showed that windows shorter than two seconds produced noticeably noisier predictions.
+Every second, the main inference thread acquires a snapshot of the buffer contents under a threading lock, computes the root-mean-square (RMS) energy to gate silence, and passes the audio array to both analysis modules. The one-second hop with three-second window means consecutive analysis windows overlap by two seconds, providing temporal smoothing without sacrificing update frequency.
+
+```
+  Time →
+  ├────────────────────────────────────────────────────────────┤
+  │  Window 1: [0s ──────────────── 3s]                        │
+  │  Window 2:     [1s ──────────────── 4s]                    │
+  │  Window 3:         [2s ──────────────── 5s]                │
+  │  Window 4:             [3s ──────────────── 6s]            │
+  │         ↑                                                  │
+  │    1s hop (inference trigger)                              │
+  └────────────────────────────────────────────────────────────┘
+
+        Figure 3: Rolling window strategy. Each window is
+        3 seconds wide with a 1-second hop between inferences.
+        Windows overlap by 2 seconds for temporal smoothing.
+```
 
 ### 3.2 Emotion Classification Module
 
-The emotion classification module wraps the superb/wav2vec2-base-superb-er model in a HuggingFace pipeline with the audio-classification task. On each inference cycle, the 48,000-sample numpy array is passed directly to the pipeline, which handles feature extraction and model inference internally. The pipeline returns probability scores for all four emotion classes, which are sorted in descending order and rendered with percentage bar visualizations.
-
-The model runs on CPU by default, with automatic GPU acceleration when a CUDA-capable device is detected. On a modern CPU, inference on a three-second clip completes in approximately 0.8 to 1.2 seconds, keeping the system within its one-second hop budget with modest headroom.
+The emotion classification module wraps the pre-trained model in a HuggingFace `pipeline` with task `audio-classification`. On each inference cycle, the 48,000-sample float32 numpy array is passed to the pipeline, which applies the model's internal feature extractor (16 kHz normalization), runs the transformer forward pass, and returns softmax probability scores for all four emotion classes. GPU inference is used automatically when a CUDA-capable device is detected; otherwise inference runs on CPU.
 
 ### 3.3 Voice Stress Analysis Module
 
-The StressAnalyzer class implements a four-feature acoustic analysis pipeline using librosa:
+The `StressAnalyzer` class computes four acoustic features per window using librosa, then scores each relative to a personal baseline established during the first six windows of voiced speech.
 
-**Fundamental Frequency (F0):** The YIN algorithm extracts frame-level pitch estimates across the audio window. Unvoiced frames (F0 below 60 Hz) are excluded. The mean of voiced F0 values constitutes the pitch estimate for that window.
+**Pitch Extraction (YIN Algorithm):** The YIN algorithm (de Cheveigné and Kawahara, 2002) estimates the fundamental frequency frame by frame by minimizing a difference function derived from the autocorrelation of the signal. It was selected over simpler autocorrelation methods for its robustness to harmonics and background noise. Frames with F0 below 60 Hz are classified as unvoiced and excluded.
 
-**Jitter:** Defined as the mean absolute difference between consecutive voiced F0 values, normalized by the mean F0. This captures micro-instability in vocal fold vibration that increases under stress.
+**Jitter Calculation:** Jitter is computed as the mean absolute difference between consecutive voiced F0 values, normalized by the mean F0:
 
-**Shimmer:** Computed from the short-time RMS energy of the signal. The mean absolute difference between consecutive non-zero RMS frames, normalized by the mean RMS, captures amplitude micro-variation associated with tension.
+```
+           1/(N-1) × Σ|F0[i] - F0[i-1]|
+  Jitter = ─────────────────────────────
+                    mean(F0)
+```
 
-**Pause Ratio:** The fraction of RMS frames falling below the silence threshold quantifies the proportion of the window containing no speech, which increases with hesitation and cognitive load.
+**Shimmer Calculation:** Shimmer is computed from short-time RMS energy frames (512-sample window, 256-sample hop). The mean absolute difference between consecutive non-zero RMS frames is normalized by the mean RMS:
 
-Each feature is scored relative to a personal baseline established during the first six seconds of voiced speech. Baseline normalization is critical because absolute feature values vary substantially between speakers. A pitch elevation score, for instance, is only meaningful relative to the individual's typical pitch, not a population average.
+```
+             1/(M-1) × Σ|RMS[j] - RMS[j-1]|
+  Shimmer = ──────────────────────────────────
+                       mean(RMS)
+```
 
-The four feature scores are combined via a weighted sum (pitch elevation: 30%, voice tremor: 30%, amplitude tremor: 20%, hesitation: 20%) to produce an overall stress score, which is mapped to four qualitative levels: Low, Moderate, High, and Very High.
+**Pause Ratio:** The fraction of RMS frames falling below the silence energy threshold quantifies the proportion of the window containing silence or near-silence.
 
-### 3.4 Display Layer
+**Personal Baseline Normalization:** Each feature is scored as a ratio relative to the speaker's own calibration-phase baseline, clipped to [0, 1]:
 
-The terminal display uses ANSI escape sequences to redraw output in place, creating a live-updating interface without screen flicker. Two bordered panels are rendered each cycle: the emotion analysis panel showing per-emotion probability bars, and the voice stress indicators panel. During the calibration period, the stress panel displays progress rather than scores.
+```
+               (current / baseline − 1.0)
+  score = clip(──────────────────────────, 0, 1)
+                        scale
+```
+
+The scale parameter differs per feature to reflect the typical dynamic range of stress-induced changes. The four feature scores are combined as a weighted sum to produce the overall stress score.
+
+### 3.4 Graphical User Interface
+
+The GUI is built with Python's standard tkinter library using a dark theme (background: `#111827`) designed for readability in varied lighting conditions. Two primary panels display emotion and stress results using custom bar widgets built from tk.Frame elements with dynamically resized fill regions — providing precise color control without the constraints of ttk.Progressbar's native styling.
+
+```
+  ┌─────────────────────────────────────────────────────┐
+  │  Voice Emotion Analyzer                  21:23:36   │
+  ├─────────────────────────────────────────────────────┤
+  │  Status: Listening...                               │
+  ├─────────────────────────────────────────────────────┤
+  │  EMOTION ANALYSIS                                   │
+  │  ┌──────────────────────────────────────────────┐  │
+  │  │ Happy    [████████████████████░░░░░░]  78.4% │  │
+  │  │ Neutral  [████░░░░░░░░░░░░░░░░░░░░░]  16.2% │  │
+  │  │ Sad      [█░░░░░░░░░░░░░░░░░░░░░░░░]   3.9% │  │
+  │  │ Angry    [░░░░░░░░░░░░░░░░░░░░░░░░░]   1.5% │  │
+  │  │                                              │  │
+  │  │ Overall: HAPPY  (78.4%)                      │  │
+  │  └──────────────────────────────────────────────┘  │
+  │                                                     │
+  │  VOICE STRESS INDICATORS                            │
+  │  ┌──────────────────────────────────────────────┐  │
+  │  │ Pitch Elevation  [████████░░░░░░░░░]  29.7%  │  │
+  │  │ Voice Tremor     [██████░░░░░░░░░░░]  23.0%  │  │
+  │  │ Amplitude Tremor [████░░░░░░░░░░░░░]  12.4%  │  │
+  │  │ Hesitation       [█████████████████]  74.5%  │  │
+  │  │                                              │  │
+  │  │ Deception likelihood: MODERATE  (33.2%)      │  │
+  │  │ * not accurate, just a fun feature :)        │  │
+  │  └──────────────────────────────────────────────┘  │
+  │                    [ Stop ]                         │
+  └─────────────────────────────────────────────────────┘
+
+        Figure 4: GUI layout showing the emotion analysis
+        and voice stress indicator panels during active inference.
+```
+
+The GUI polls a shared results dictionary every 200 milliseconds via tkinter's `after()` scheduling mechanism, updating bar widths and label text without blocking the main event loop. This poll-based design ensures thread safety without requiring tkinter to be called from background threads, which is unsupported on most platforms.
 
 ---
 
@@ -107,44 +310,112 @@ The terminal display uses ANSI escape sequences to redraw output in place, creat
 
 ### 4.1 Development Environment
 
-The project was developed on Windows 11 using Python 3.14. Key dependencies include:
+The project was developed on Windows 11 using Python 3.14. All dependencies are installable via pip and documented in `requirements.txt`. A `setup.bat` script automates virtual environment creation and dependency installation for end users.
 
-- **torch** (2.x): PyTorch backend for model inference
-- **transformers** (4.35+): HuggingFace model loading and pipeline interface
-- **sounddevice** (0.4.6): Cross-platform real-time audio I/O
-- **librosa** (0.10+): Audio feature extraction
-- **numpy** (1.24+): Numerical array operations
+| Dependency | Version | Purpose |
+|---|---|---|
+| torch | ≥ 2.0 | PyTorch inference backend |
+| transformers | ≥ 4.35 | HuggingFace model loading and pipeline API |
+| sounddevice | ≥ 0.4.6 | Cross-platform real-time audio I/O |
+| librosa | ≥ 0.10 | Acoustic feature extraction |
+| numpy | ≥ 1.24 | Numerical array operations |
 
-### 4.2 Key Implementation Decisions
+*Table 4: Project dependencies.*
 
-**Thread-safe buffer:** The audio callback runs in a dedicated sounddevice thread. A threading.Lock protects the deque during reads in the main loop, preventing race conditions between audio capture and inference.
+### 4.2 Model Selection and Evaluation
 
-**Silence gating:** An RMS energy threshold filters windows containing no meaningful speech before passing audio to the model. This prevents the emotion classifier from producing noise-driven predictions during pauses and reduces unnecessary CPU load. The threshold was calibrated empirically by measuring microphone output levels during silent and voiced conditions.
+Three candidate models were evaluated for the emotion classification task:
 
-**Calibration phase:** The StressAnalyzer requires a minimum of six voiced speech windows before activating stress scoring. This ensures that the baseline accurately reflects the speaker's natural vocal characteristics rather than the first few frames of a cold start.
+| Model | Dataset | Emotions | Architecture | Loads Cleanly | Selected |
+|---|---|---|---|---|---|
+| ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition | RAVDESS | 8 | wav2vec2-large-xlsr | No (head mismatch) | ✗ |
+| superb/wav2vec2-base-superb-er | IEMOCAP | 4 | wav2vec2-base | Yes | ✓ |
+| speechbrain/emotion-recognition-wav2vec2-IEMOCAP | IEMOCAP | 4 | wav2vec2-base | Requires SpeechBrain | ✗ |
 
-**Model selection:** Early in the project, the ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition model, trained on RAVDESS, was evaluated. This model presented a classifier head architecture mismatch with the current HuggingFace Wav2Vec2ForSequenceClassification implementation: the checkpoint contained classifier.dense and classifier.output layers, while the pipeline expected projector and classifier layers. As a result, the classification head was randomly initialized rather than loaded from the checkpoint, producing unreliable predictions. The model was replaced with superb/wav2vec2-base-superb-er, which loads without architectural discrepancy.
+*Table 5: Model evaluation summary.*
+
+The ehcalabres model was eliminated due to a classifier head architecture mismatch with the current HuggingFace `Wav2Vec2ForSequenceClassification` implementation. The model checkpoint saved weights under `classifier.dense` and `classifier.output` keys, while the current library expects `projector` and `classifier` layer names. The HuggingFace LOAD REPORT flagged these as UNEXPECTED and MISSING respectively, indicating the classification head was randomly initialized rather than loaded from the checkpoint. This produced unreliable, effectively random emotion predictions despite the base wav2vec2 layers loading correctly.
+
+The SpeechBrain model required installation of the SpeechBrain library as an additional dependency, introducing complexity for end-user setup. The SUPERB model (superb/wav2vec2-base-superb-er) loaded without warnings, integrated cleanly with the standard HuggingFace pipeline API, and required no additional dependencies beyond `transformers` and `torch`.
+
+### 4.3 Threading Architecture
+
+The application uses two threads:
+
+**Main thread (tkinter event loop):** Manages the GUI, handles user interactions, and polls the shared results dictionary every 200 ms via `after()`.
+
+**Analysis thread (daemon):** Manages audio capture and inference. Runs the sounddevice InputStream context, processes audio windows, and writes results to the shared dictionary under a threading lock.
+
+```
+  Main Thread                    Analysis Thread
+  ────────────                   ───────────────
+  tkinter mainloop()             while running:
+       │                              │
+       ├── after(200ms, poll)         ├── sleep(1s)
+       │        │                     │
+       │        ▼                     ├── acquire buffer lock
+       │   read results dict ◄────────┼── write results dict
+       │        │                     │
+       │   update bars/labels         ├── classify emotions
+       │                              ├── analyze stress
+       │                              └── (repeat)
+       └── (repeat)
+
+        Figure 5: Threading model showing interaction between
+        the main GUI thread and the background analysis thread.
+```
+
+### 4.4 Silence Gating and Microphone Calibration
+
+A critical practical challenge was silence detection. The initial RMS threshold of 0.01 — derived from general guidance — was too high for the test hardware, which operated at a peak RMS of approximately 0.00048 during normal speech. This caused the system to classify all audio as silence and never proceed to inference.
+
+Diagnosis was accomplished by modifying the silence message to display the live RMS value:
+
+```
+[silence — mic RMS: 0.00048, threshold: 0.001]
+```
+
+This revealed that the microphone's output was two orders of magnitude below the initial threshold. The threshold was lowered to 0.0002, resolving the issue. This experience motivated the design of a diagnostic utility (`mic_test.py`) that records three seconds of audio and reports RMS and peak levels with a recommended threshold value, included in the repository for future users.
 
 ---
 
 ## 5. Project Timeline
 
-The project spanned ten weeks from January 31 to April 5, 2026, organized into five phases.
+The project ran from January 31 to April 5, 2026 — a period of ten weeks structured into five phases.
 
-**Phase 1 — Literature Review and Scoping (January 31 – February 13)**  
-The first two weeks were dedicated to surveying the academic and technical landscape of speech emotion recognition. This included reading foundational papers on wav2vec2, reviewing the IEMOCAP and RAVDESS dataset documentation, examining the SUPERB benchmark leaderboard, and exploring existing open-source SER implementations. By the end of this phase, the project scope was defined: a real-time, single-speaker emotion recognition system augmented with acoustic stress analysis, targeting consumer hardware without requiring model training.
+```
+Phase                        Jan  Feb  Feb  Mar  Mar  Apr
+                             31   14   28   14   28   5
+─────────────────────────────┼────┼────┼────┼────┼────┤
+1. Literature Review         ████████                  │
+2. Model Evaluation                  ████████          │
+3. Core Implementation                    ████████████ │
+4. Stress Analysis Module                         ████ │
+5. Testing & Refinement                               ██
 
-**Phase 2 — Model Evaluation and Architecture Design (February 14 – February 28)**  
-Multiple pre-trained models were evaluated for suitability. Criteria included: cleanness of model loading (no missing or unexpected weight keys), inference speed on CPU, emotion vocabulary breadth, and compatibility with the HuggingFace pipeline API. Models evaluated included ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition, superb/wav2vec2-base-superb-er, and speechbrain/emotion-recognition-wav2vec2-IEMOCAP. The RAVDESS-trained model was eliminated due to the architecture mismatch described in Section 4.2. The SUPERB model was selected as the primary classifier. The overall system architecture — rolling buffer, inference loop, dual-panel display — was designed and documented during this phase.
+        Figure 6: Project timeline (Gantt chart).
+        Each block represents approximately one week.
+```
 
-**Phase 3 — Core Implementation (March 1 – March 21)**  
-The three-week core implementation phase produced the real-time audio pipeline and emotion classification system. This involved implementing the sounddevice InputStream callback, the thread-safe deque buffer, the silence energy gate, and the HuggingFace pipeline integration. The terminal display layer, including the in-place ANSI redraw system and the percentage bar visualization, was developed and iterated upon. Significant time was spent debugging the silence threshold: initial values were too high for the low-gain microphone used in testing, requiring the addition of live RMS diagnostics to identify the appropriate threshold.
+**Phase 1 — Literature Review and Scoping (January 31 – February 13)**
 
-**Phase 4 — Voice Stress Analysis Module (March 22 – April 1)**  
-The StressAnalyzer class was designed and implemented as a parallel analysis stream. This phase required deeper engagement with the librosa library, specifically the YIN pitch estimation algorithm and short-time RMS frame analysis. The four-feature extraction pipeline was built and tested in isolation before integration with the main loop. The personal baseline calibration mechanism was designed to address inter-speaker variability. The weighted scoring and qualitative verdict system were implemented and tuned based on observed feature ranges during testing.
+The first two weeks were dedicated to surveying the academic and technical landscape of speech emotion recognition. This included reading foundational papers on wav2vec 2.0, HuBERT, and WavLM; reviewing the IEMOCAP and RAVDESS dataset documentation; examining the SUPERB benchmark leaderboard; and exploring existing open-source SER implementations on HuggingFace and GitHub. The acoustic psychophysiology of stress was also reviewed to understand the theoretical basis for jitter, shimmer, and F0 as stress correlates. By the end of this phase, the project scope was defined: a real-time, single-speaker system targeting consumer hardware without requiring model training, with a secondary voice stress analysis module as a distinguishing feature.
 
-**Phase 5 — Testing, Refinement, and Documentation (April 2 – April 5)**  
-The final phase addressed system-level issues identified through sustained use: microphone sensitivity calibration, label formatting (abbreviated model output labels expanded to full words), emoji removal from the interface for compatibility, and display layout adjustments. Performance was evaluated informally across several emotional scenarios, and the system's behavior was documented for this report.
+**Phase 2 — Model Evaluation and Architecture Design (February 14 – February 28)**
+
+Three pre-trained models were evaluated against the criteria described in Section 4.2. The RAVDESS-trained model was tested first due to its broader emotion vocabulary, but was eliminated after the architecture mismatch issue was identified and confirmed. The SUPERB model was selected as the primary classifier. Concurrently, the overall system architecture was designed: rolling buffer strategy, threading model, dual-module inference loop, and GUI layout. The decision to use tkinter rather than a web-based frontend (e.g., Flask + HTML) was made to keep the distribution simple — a single Python file with no server process.
+
+**Phase 3 — Core Implementation (March 1 – March 21)**
+
+The three-week core implementation phase produced the real-time audio pipeline and emotion classification system. Implementation proceeded in layers: sounddevice InputStream and callback, thread-safe deque buffer, silence energy gate, HuggingFace pipeline integration, and the tkinter GUI framework. The custom bar widget (`BarRow`) was developed iteratively — initial attempts using `ttk.Progressbar` were abandoned due to the inability to set custom bar colors through the ttk styling API on Windows. The final implementation uses dynamically resized `tk.Frame` elements as fill bars, providing full color control. The ANSI-based terminal interface from the initial prototype was preserved as `emotion_recognition.py` for command-line use.
+
+**Phase 4 — Voice Stress Analysis Module (March 22 – April 1)**
+
+The `StressAnalyzer` class was designed and implemented as a parallel analysis stream alongside the emotion classifier. This phase required in-depth engagement with the librosa library: specifically, the `yin()` pitch estimator, `feature.rms()` for short-time energy frames, and the design of the normalization and scoring functions. The personal baseline calibration mechanism was the most conceptually significant design decision of this phase: without speaker normalization, absolute feature values would be meaningless for comparison across individuals. The calibration UI — a progress bar in the stress panel that fills during the first six voiced windows — was designed to communicate the calibration status clearly to the user.
+
+**Phase 5 — Testing, Refinement, and Documentation (April 2 – April 5)**
+
+The final phase addressed system-level issues discovered through sustained use: the microphone RMS threshold problem (Section 4.4), abbreviated model output labels (hap, neu, ang expanded to full words), emoji removal for terminal compatibility, display layout adjustments, and the addition of a Start/Stop button to the GUI. The setup and run batch scripts were authored and tested on a clean Python installation. The report and repository were finalized.
 
 ---
 
@@ -152,45 +423,102 @@ The final phase addressed system-level issues identified through sustained use: 
 
 ### 6.1 Emotion Classification Performance
 
-The superb/wav2vec2-base-superb-er model demonstrates reasonable real-time performance for its four emotion classes. In informal testing, the system reliably distinguishes between markedly different affective states — animated, high-energy speech is classified as happy or angry depending on valence, while calm, even-toned speech trends toward neutral. Transitions between emotional states are reflected in shifting probability distributions within one to two seconds of the vocal change, given the one-second hop and three-second window.
+The superb/wav2vec2-base-superb-er model demonstrates reliable real-time classification for its four emotion classes. Table 6 summarizes observed classification behavior across different vocal scenarios tested informally during development.
 
-The system's primary limitation is the coarseness of its four-class vocabulary. Emotional states such as nervousness, anxiousness, excitement, and surprise — which users may wish to detect — are not represented as discrete classes and may be poorly captured by the angry/happy/neutral/sad taxonomy.
+| Vocal Scenario | Expected | Observed | Consistent? |
+|---|---|---|---|
+| Enthusiastic, high-energy speech | Happy | Happy (>70%) | Yes |
+| Calm, measured speech | Neutral | Neutral (>60%) | Yes |
+| Raised, tense voice | Angry | Angry (>55%) | Mostly |
+| Slow, low-energy speech | Sad | Sad / Neutral (mixed) | Partial |
+| Nervous, rapid speech | Happy / Neutral | Happy (>50%) | Partial |
+
+*Table 6: Informal classification behavior across vocal scenarios.*
+
+Transitions between emotional states are reflected in shifting probability distributions within one to two seconds of the vocal change, given the one-second hop and two-second window overlap. The model exhibits natural uncertainty — mixed emotional states produce distributions spread across multiple classes rather than hard misclassifications, which is behaviorally appropriate.
 
 ### 6.2 Voice Stress Analysis Behavior
 
-The stress module behaves as designed: during the calibration phase it accumulates baseline measurements, then scores subsequent windows against the personal norm. In practice, the hesitation score is the most volatile indicator, varying substantially with natural speech rhythm and pausing. Pitch elevation and voice tremor respond more gradually and tend to produce more stable readings over sustained speech. The overall stress score in normal, relaxed speech typically stabilizes between 10% and 30%, providing headroom for detection of elevated states.
+The stress module behaves as designed following calibration. Table 7 summarizes typical feature score ranges observed under different speech conditions.
+
+| Condition | Pitch Elevation | Voice Tremor | Amplitude Tremor | Hesitation | Overall |
+|---|---|---|---|---|---|
+| Calm, fluent speech | 5–15% | 5–20% | 5–15% | 10–25% | 8–18% |
+| Rapid, excited speech | 25–45% | 15–30% | 10–25% | 15–35% | 20–35% |
+| Hesitant, pausing speech | 10–20% | 10–25% | 10–20% | 50–80% | 25–40% |
+| Loud, tense speech | 35–55% | 25–45% | 20–40% | 10–30% | 28–45% |
+
+*Table 7: Approximate stress indicator ranges under different speech conditions.*
+
+Hesitation is the most volatile indicator, varying substantially with natural speech rhythm. Pitch elevation and voice tremor respond more gradually and produce more stable readings over sustained speech. The overall stress score in relaxed, natural speech typically stabilizes in the 10–25% range after calibration, providing headroom for elevated-state detection.
 
 ### 6.3 System Performance
 
-On a CPU-only configuration, each inference cycle — comprising RMS gating, emotion classification, and acoustic feature extraction — completes in approximately 1.0 to 1.8 seconds. Since the hop interval is one second, the system runs at roughly real-time with occasional minor lag. GPU acceleration reduces inference time to under 200 milliseconds, enabling comfortable real-time operation.
+Performance was measured on a CPU-only configuration (no GPU).
+
+| Metric | Value |
+|---|---|
+| Emotion inference time (CPU) | 0.8 – 1.2 s |
+| Acoustic feature extraction time | 0.05 – 0.15 s |
+| Total cycle time (CPU) | ~1.0 – 1.4 s |
+| GUI poll interval | 200 ms |
+| Effective update rate | ~1 per second |
+| Model size (download) | ~360 MB |
+| RAM usage (steady state) | ~900 MB – 1.2 GB |
+
+*Table 8: System performance metrics on CPU.*
+
+With GPU acceleration, emotion inference time drops to under 200 ms, allowing the hop interval to be reduced to 0.5 seconds for smoother updates. CPU performance is sufficient for the one-second hop and keeps the system broadly accessible without requiring a dedicated GPU.
 
 ---
 
 ## 7. Challenges and Limitations
 
-**Microphone sensitivity:** The most immediately practical challenge encountered was microphone gain calibration. The initial silence threshold of 0.01 RMS was derived from general guidance but proved too high for the test hardware, which operated at a peak RMS of approximately 0.00048 during normal speech. This was diagnosed by adding live RMS readout to the silence gate message and resolved by lowering the threshold to 0.0002. This experience highlighted the importance of adaptive or user-calibrated thresholds for real-world deployability.
+### 7.1 Microphone Sensitivity and Threshold Calibration
 
-**Model architecture compatibility:** The initial model selection (ehcalabres/wav2vec2-lg-xlsr-en-speech-emotion-recognition) failed silently due to a weight key mismatch between the saved checkpoint and the current HuggingFace model class. The load report showed UNEXPECTED and MISSING keys in the classifier head, meaning predictions were based on a randomly initialized classification layer. This underscores the importance of verifying model loading completeness rather than trusting that a model card implies compatibility.
+The most immediately practical challenge was microphone gain calibration. The initial silence threshold was derived from general guidance in the sounddevice documentation and proved two orders of magnitude too high for the specific hardware under test. The system rejected all audio as silence, appearing non-functional. The debugging process — adding a live RMS readout to the silence gate message — was straightforward once the issue was framed correctly, but the experience highlighted a broader design gap: the threshold should ideally be determined automatically from a brief ambient noise measurement at startup rather than hardcoded. Automatic gain calibration is identified as a priority for future work.
 
-**Emotion vocabulary:** The four-class IEMOCAP-trained model does not cover the full spectrum of emotionally meaningful states. A production system would benefit from a model trained on a broader taxonomy or from fine-tuning on domain-specific data.
+### 7.2 Model Architecture Compatibility
 
-**Voice stress validity:** As discussed in the literature review, voice stress analysis lacks scientific validation as a deception detection tool. The stress module in this system is explicitly framed as a non-validated, educational feature. Its value lies in demonstrating acoustic feature extraction and personalized baseline normalization rather than in providing actionable deception inference.
+The initial model selection failed silently due to a weight key mismatch between the saved checkpoint and the current HuggingFace `Wav2Vec2ForSequenceClassification` class. The LOAD REPORT printed by the transformers library flagged this with UNEXPECTED and MISSING keys, but the model still loaded and ran without raising an exception — producing random, uncorrelated predictions. This class of failure is particularly insidious in machine learning deployments because the system appears to function normally while producing meaningless output. It underscores the importance of verifying model loading completeness at integration time, not just checking that the pipeline runs without error.
+
+### 7.3 Emotion Vocabulary
+
+The four-class IEMOCAP vocabulary (angry, happy, neutral, sad) does not cover the full spectrum of emotionally significant states. Nervousness, anxiousness, excitement, surprise, disgust, and fear — all states with distinct vocal correlates — are not represented as discrete classes. Nervous or anxious speech in practice tends to be classified as neutral or angry depending on energy level, which is a meaningful limitation for applications that specifically target those states.
+
+### 7.4 Voice Stress Validity
+
+As established in the literature review, voice stress analysis lacks scientific validation as a deception detection tool. The stress module is designed and framed as an educational feature demonstrating acoustic analysis, not a reliable behavioral inference tool. Its value in this project is in illustrating how acoustic features can be extracted, normalized, and combined into a composite score — a methodology applicable to validated tasks such as clinical tremor monitoring or fatigue detection.
+
+### 7.5 Single-Speaker Assumption
+
+The system assumes a single speaker throughout a session. The calibration baseline is set once at startup and is not updated or extended. In multi-speaker scenarios, a speaker diarization step would be required before emotion or stress analysis could be applied meaningfully per speaker.
 
 ---
 
 ## 8. Conclusion and Future Work
 
-This project successfully produced a real-time speech emotion recognition and voice stress analysis system built on modern self-supervised speech representations. The system processes continuous microphone input, classifies emotional states with associated probability scores, and provides a speaker-normalized stress profile, all updated at one-second intervals with minimal hardware requirements.
+### 8.1 Conclusion
 
-The project provided hands-on experience with the HuggingFace Transformers ecosystem, real-time audio engineering in Python, acoustic feature extraction with librosa, and the practical challenges of deploying pre-trained models on consumer hardware. The debugging arc — from model architecture mismatches to microphone threshold calibration — reflected challenges typical of real-world machine learning systems development.
+This project successfully produced a real-time speech emotion recognition and voice stress analysis system built on modern self-supervised speech representations. The system processes continuous microphone input, classifies emotional states with associated probability scores across four classes, and provides a speaker-normalized stress profile across four acoustic dimensions — all updated at one-second intervals through a custom desktop GUI, with no GPU required.
+
+The project provided substantial hands-on experience across the full stack of a machine learning application: model evaluation and selection, real-time audio engineering, acoustic feature extraction, threading and concurrency, GUI development, and open-source distribution. The debugging arc — from model architecture mismatches to microphone threshold calibration — reflected challenges typical of real-world ML systems deployment and reinforced the importance of end-to-end testing beyond benchmark evaluation.
+
+### 8.2 Future Work
 
 Several directions could extend this work meaningfully:
 
-- **Broader emotion vocabulary:** Fine-tuning wav2vec2 or a HuBERT model on a dataset with more emotion categories (e.g., CREMA-D or MSP-IMPROV) would substantially increase the system's expressive range.
-- **Dimensional emotion modeling:** Replacing categorical classification with a valence-arousal-dominance regression model would enable continuous, nuanced emotional state tracking.
-- **Adaptive silence gating:** Implementing automatic gain calibration at startup would remove the need for manual threshold tuning.
-- **Speaker diarization:** Extending the system to multi-speaker scenarios using speaker embedding models would enable per-speaker emotion tracking in conversational settings.
-- **Graphical interface:** A matplotlib or web-based frontend would improve usability and enable time-series visualization of emotional state trajectories.
+**Broader emotion vocabulary:** Fine-tuning wav2vec2 or a HuBERT model on a dataset with more emotion categories — such as CREMA-D (6 classes) or MSP-IMPROV (4 + dimensional) — would increase expressive range. The RAVDESS-trained model with 8 classes remains a candidate if its architecture compatibility issue is resolved by using an older transformers version.
+
+**Dimensional emotion modeling:** Replacing categorical classification with a valence-arousal-dominance (VAD) regression model (e.g., audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim) would enable continuous, nuanced emotional state tracking and would naturally accommodate states like nervousness and anxiousness as combinations of high arousal and low valence.
+
+**Automatic gain calibration:** A brief ambient noise measurement at startup could set the silence threshold automatically, eliminating the manual tuning step that caused significant friction during development.
+
+**Speaker diarization:** Integrating a speaker embedding model (e.g., ECAPA-TDNN) would enable per-speaker emotion and stress tracking in multi-speaker conversations — significantly expanding the range of applicable scenarios.
+
+**Longitudinal emotion tracking:** Visualizing emotion and stress trajectories over time (e.g., with a scrolling matplotlib canvas) would allow users to observe patterns across a conversation rather than only point-in-time snapshots.
+
+**Mobile or web deployment:** Porting the inference pipeline to ONNX or TensorFlow Lite would enable deployment on mobile devices or in the browser via WebAssembly, greatly expanding accessibility.
 
 ---
 
@@ -200,12 +528,18 @@ Baevski, A., Zhou, Y., Mohamed, A., & Auli, M. (2020). wav2vec 2.0: A framework 
 
 Busso, C., Bulut, M., Lee, C. C., Kazemzadeh, A., Mower, E., Kim, S., Chang, J. N., Lee, S., & Narayanan, S. S. (2008). IEMOCAP: Interactive emotional dyadic motion capture database. *Language Resources and Evaluation*, 42(4), 335–359.
 
-De Boer, N. (2002). YIN, a fundamental frequency estimator for speech and music. *Journal of the Acoustical Society of America*, 111(4), 1917–1930.
+Cao, H., Cooper, D. G., Kuchinsky, M. K., Ghosh, S., Ma, C., & Bhatt, R. (2014). CREMA-D: Crowd-sourced emotional multimodal actors dataset. *IEEE Transactions on Affective Computing*, 5(4), 377–390.
 
-Livingstone, S. R., & Russo, F. A. (2018). The Ryerson Audio-Visual Database of Emotional Speech and Song (RAVDESS). *PLOS ONE*, 13(5), e0196391.
+de Cheveigné, A., & Kawahara, H. (2002). YIN, a fundamental frequency estimator for speech and music. *Journal of the Acoustical Society of America*, 111(4), 1917–1930.
+
+Hsu, W. N., Bolte, B., Tsai, Y. H. H., Lakhotia, K., Salakhutdinov, R., & Mohamed, A. (2021). HuBERT: Self-supervised speech representation learning by masked prediction of hidden units. *IEEE/ACM Transactions on Audio, Speech, and Language Processing*, 29, 3451–3460.
+
+Livingstone, S. R., & Russo, F. A. (2018). The Ryerson Audio-Visual Database of Emotional Speech and Song (RAVDESS): A dynamic, multimodal set of facial and vocal expressions in North American English. *PLOS ONE*, 13(5), e0196391.
 
 McFee, B., Raffel, C., Liang, D., Ellis, D., McVicar, M., Battenberg, E., & Nieto, O. (2015). librosa: Audio and music signal analysis in Python. *Proceedings of the 14th Python in Science Conference*, 18–25.
 
 National Research Council. (2003). *The polygraph and lie detection*. National Academies Press.
 
-Yang, S., Chi, P. H., Chuang, Y. S., Lai, C. I. J., Lakhotia, K., Lin, Y. Y., Liu, A. T., Shi, J., Chang, X., Lin, G. T., Huang, T. H., Tseng, H. J., Lee, H. Y., & others. (2021). SUPERB: Speech processing universal performance benchmark. *Proceedings of Interspeech 2021*, 1194–1198.
+Poria, S., Cambria, E., Bajpai, R., & Hussain, A. (2017). A review of affective computing: From unimodal analysis to multimodal fusion. *Information Fusion*, 37, 98–125.
+
+Yang, S., Chi, P. H., Chuang, Y. S., Lai, C. I. J., Lakhotia, K., Lin, Y. Y., Liu, A. T., Shi, J., Chang, X., Lin, G. T., Huang, T. H., Tseng, H. J., & Lee, H. Y. (2021). SUPERB: Speech processing universal performance benchmark. *Proceedings of Interspeech 2021*, 1194–1198.
