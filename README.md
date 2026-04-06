@@ -3,8 +3,8 @@
 A real-time speech emotion recognition and voice stress analysis desktop application built with Python and PyTorch.
 
 **Developed by:** Amulya Prasad  
-**Advisor:** Dr. Pramod Abhichandani — New Jersey Institute of Technology  
-**Course:** Independent Study (CS 488)
+**Advisor:** Dr. Pramod Abhichandani
+**Course:** Independent Study (CS 488) - NJIT
 
 ---
 
