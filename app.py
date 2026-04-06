@@ -8,7 +8,7 @@ import sounddevice as sd
 from transformers import pipeline
 from collections import deque
 
-# ── Config ─────────────────────────────────────────────────────────────────
+#Config
 MODEL_ID      = "superb/wav2vec2-base-superb-er"
 SAMPLE_RATE   = 16_000
 WINDOW_SEC    = 3
@@ -33,7 +33,7 @@ STRESS_COLORS = {
     "Hesitation":        "#fbbf24",
 }
 
-# ── Theme ──────────────────────────────────────────────────────────────────
+#Theme
 BG      = "#111827"
 SURFACE = "#1f2937"
 BORDER  = "#374151"
@@ -44,7 +44,7 @@ BAR_W   = 320
 BAR_H   = 20
 
 
-# ── Stress Analyzer ────────────────────────────────────────────────────────
+#Stress Analyzer
 class StressAnalyzer:
     WEIGHTS = {"pitch_elevation": 0.30, "voice_tremor": 0.30,
                 "amplitude_tremor": 0.20, "speech_hesitation": 0.20}
@@ -110,7 +110,7 @@ class StressAnalyzer:
         return               "VERY HIGH",    "#ef4444"
 
 
-# ── Custom bar widget ──────────────────────────────────────────────────────
+#Custom bar widget
 class BarRow(tk.Frame):
     def __init__(self, parent, label, color, **kw):
         super().__init__(parent, bg=SURFACE, **kw)
@@ -136,7 +136,7 @@ class BarRow(tk.Frame):
         self._pct.config(text=f"{score*100:5.1f}%")
 
 
-# ── Main App ───────────────────────────────────────────────────────────────
+#Main App
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -152,7 +152,7 @@ class App(tk.Tk):
         self._build_ui()
         self._start()
 
-    # ── UI build ────────────────────────────────────────────────────────
+    #UI build
     def _section(self, parent, title):
         outer = tk.Frame(parent, bg=BORDER, padx=1, pady=1)
         outer.pack(fill="x", padx=16, pady=(0, 12))
@@ -181,7 +181,7 @@ class App(tk.Tk):
 
         tk.Frame(self, bg=BG, height=10).pack()
 
-        # ── Emotion section
+        #Emotion section
         emo_sec = self._section(self, "EMOTION ANALYSIS")
         self._emo_bars = {}
         for raw in ["hap", "neu", "sad", "ang"]:
@@ -197,7 +197,7 @@ class App(tk.Tk):
                                      font=("Consolas", 12, "bold"))
         self._emo_verdict.pack(anchor="w")
 
-        # ── Stress section
+        #Stress section
         stress_sec = self._section(self, "VOICE STRESS INDICATORS")
         self._cal_label = tk.Label(stress_sec,
                                    text="Speak normally for ~6 seconds to calibrate...",
@@ -240,13 +240,9 @@ class App(tk.Tk):
         self._btn.pack()
 
         self._tick_clock()
-
-    # ── Clock ────────────────────────────────────────────────────────────
     def _tick_clock(self):
         self._clock.config(text=time.strftime("%H:%M:%S"))
         self.after(1000, self._tick_clock)
-
-    # ── Analysis thread ──────────────────────────────────────────────────
     def _start(self):
         self._running = True
         self._thread  = threading.Thread(target=self._run, daemon=True)
@@ -312,7 +308,6 @@ class App(tk.Tk):
     def _set_status(self, msg):
         self.after(0, lambda: self._status.config(text=msg))
 
-    # ── UI polling ───────────────────────────────────────────────────────
     def _poll(self):
         with self._lock:
             data = dict(self._results)
