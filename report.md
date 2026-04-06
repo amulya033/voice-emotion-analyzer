@@ -423,52 +423,56 @@ The final phase addressed system-level issues discovered through sustained use: 
 
 ### 6.1 Emotion Classification Performance
 
-The superb/wav2vec2-base-superb-er model demonstrates reliable real-time classification for its four emotion classes. Table 6 summarizes observed classification behavior across different vocal scenarios tested informally during development.
+The superb/wav2vec2-base-superb-er model was evaluated across five controlled vocal scenarios. For each scenario, the speaker sustained a distinct vocal style for 20 seconds while the system recorded per-window emotion probability distributions. Table 6 reports the average scores across all windows collected per scenario (78 total samples across all scenarios).
 
-| Vocal Scenario | Expected | Observed | Consistent? |
-|---|---|---|---|
-| Enthusiastic, high-energy speech | Happy | Happy (>70%) | Yes |
-| Calm, measured speech | Neutral | Neutral (>60%) | Yes |
-| Raised, tense voice | Angry | Angry (>55%) | Mostly |
-| Slow, low-energy speech | Sad | Sad / Neutral (mixed) | Partial |
-| Nervous, rapid speech | Happy / Neutral | Happy (>50%) | Partial |
+| Scenario | Dominant Class | Happy | Neutral | Sad | Angry |
+|---|---|---|---|---|---|
+| Neutral (calm, normal speech) | Happy | 64.9% | 17.9% | 16.7% | 0.5% |
+| Happy (enthusiastic, excited) | Neutral | 33.8% | 38.9% | 23.0% | 4.3% |
+| Angry (raised, tense voice) | Angry | 34.1% | 15.3% | 5.1% | 45.5% |
+| Sad (slow, quiet speech) | Happy | 35.2% | 34.7% | 29.7% | 0.3% |
+| Hesitant (pauses, filler words) | Happy | 60.8% | 26.2% | 12.7% | 0.2% |
 
-*Table 6: Informal classification behavior across vocal scenarios.*
+*Table 6: Measured emotion classification results across five vocal scenarios (78 samples, CPU inference, no GPU).*
 
-Transitions between emotional states are reflected in shifting probability distributions within one to two seconds of the vocal change, given the one-second hop and two-second window overlap. The model exhibits natural uncertainty — mixed emotional states produce distributions spread across multiple classes rather than hard misclassifications, which is behaviorally appropriate.
+These results reveal important characteristics of the model's behavior. The Angry scenario was the only one where the expected class achieved clear dominance (45.5%), suggesting the model is most discriminative for high-energy negative affect. The Neutral and Hesitant scenarios were both dominated by Happy, likely because the speaker's natural conversational tone shares prosodic features — steady pace, moderate pitch — with the IEMOCAP "happy" class. The Happy scenario counterintuitively returned Neutral as dominant (38.9%), with Happy second (33.8%), suggesting the model was trained on acted emotional speech with more exaggerated affect than natural conversation. The Sad scenario produced near-even distribution across Happy, Neutral, and Sad, consistent with the known difficulty of distinguishing low-arousal states. These results highlight that the model performs best on high-arousal, distinctly different states (angry vs. neutral) and struggles with subtle naturalistic emotion, a known limitation in the SER literature.
 
 ### 6.2 Voice Stress Analysis Behavior
 
-The stress module behaves as designed following calibration. Table 7 summarizes typical feature score ranges observed under different speech conditions.
+The stress module was evaluated over the same five scenarios used for Table 6. Table 7 reports the average value of each stress indicator per scenario, measured after personal baseline calibration.
 
-| Condition | Pitch Elevation | Voice Tremor | Amplitude Tremor | Hesitation | Overall |
+| Scenario | Pitch Elevation | Voice Tremor | Amplitude Tremor | Hesitation | Overall |
 |---|---|---|---|---|---|
-| Calm, fluent speech | 5–15% | 5–20% | 5–15% | 10–25% | 8–18% |
-| Rapid, excited speech | 25–45% | 15–30% | 10–25% | 15–35% | 20–35% |
-| Hesitant, pausing speech | 10–20% | 10–25% | 10–20% | 50–80% | 25–40% |
-| Loud, tense speech | 35–55% | 25–45% | 20–40% | 10–30% | 28–45% |
+| Neutral | 0.9% | 33.2% | 1.9% | 64.1% | 23.4% |
+| Happy | 7.6% | 34.6% | 8.7% | 28.3% | 20.1% |
+| Angry | 19.6% | 34.7% | 13.9% | 24.9% | 24.0% |
+| Sad | 11.9% | 36.9% | 12.0% | 43.0% | 25.6% |
+| Hesitant | 8.1% | 45.1% | 3.7% | 42.9% | 25.3% |
 
-*Table 7: Approximate stress indicator ranges under different speech conditions.*
+*Table 7: Measured voice stress indicator values across five vocal scenarios (averages over 20-second recording windows, speaker-normalized to personal baseline).*
 
-Hesitation is the most volatile indicator, varying substantially with natural speech rhythm. Pitch elevation and voice tremor respond more gradually and produce more stable readings over sustained speech. The overall stress score in relaxed, natural speech typically stabilizes in the 10–25% range after calibration, providing headroom for elevated-state detection.
+Several patterns emerge from the measured data. Voice tremor was consistently elevated across all scenarios (33–45%), suggesting this feature may have been overfit during calibration or is sensitive to normal variation in conversational speech rather than stress specifically. Pitch elevation behaved as expected — highest during the Angry scenario (19.6%) and near-zero during Neutral (0.9%). Hesitation showed the largest scenario-dependent variation: 64.1% during the deliberately slow Neutral reading (likely because natural pausing was classified as hesitation relative to the faster calibration baseline) versus 24.9% during the Angry scenario where speech was more continuous. The overall stress scores were tightly clustered between 20.1% and 25.6% across all scenarios, which reflects the limitations of VSA discussed in Section 2.6 — the acoustic features extracted do not reliably differentiate emotional scenarios at the overall score level when speaker-normalized.
 
 ### 6.3 System Performance
 
-Performance was measured on a CPU-only configuration (no GPU).
+System performance was measured across 78 inference cycles collected during the five-scenario evaluation session, running on CPU with no GPU acceleration.
 
-| Metric | Value |
+| Metric | Measured Value |
 |---|---|
-| Emotion inference time (CPU) | 0.8 – 1.2 s |
-| Acoustic feature extraction time | 0.05 – 0.15 s |
-| Total cycle time (CPU) | ~1.0 – 1.4 s |
+| Total samples collected | 78 |
+| Average inference time (CPU) | 0.325 s |
+| Minimum inference time | 0.258 s |
+| Maximum inference time | 0.509 s |
+| Acoustic feature extraction time | ~0.05 – 0.10 s |
+| Total cycle time (inference + features) | ~0.375 – 0.610 s |
 | GUI poll interval | 200 ms |
-| Effective update rate | ~1 per second |
-| Model size (download) | ~360 MB |
-| RAM usage (steady state) | ~900 MB – 1.2 GB |
+| Effective update rate | 1 per second (1 s hop) |
+| GPU used | No (CPU only) |
+| Model download size | ~360 MB |
 
-*Table 8: System performance metrics on CPU.*
+*Table 8: Measured system performance metrics (78 samples, CPU-only, Windows 11).*
 
-With GPU acceleration, emotion inference time drops to under 200 ms, allowing the hop interval to be reduced to 0.5 seconds for smoother updates. CPU performance is sufficient for the one-second hop and keeps the system broadly accessible without requiring a dedicated GPU.
+The average inference time of 0.325 seconds comfortably fits within the one-second hop interval, leaving approximately 0.675 seconds of margin per cycle for feature extraction, GUI updates, and audio buffering. The maximum observed inference time of 0.509 seconds — likely caused by CPU scheduling variance or thermal throttling during the session — also remained within budget. This confirms that the system runs reliably at real-time cadence on consumer hardware without GPU acceleration. With GPU acceleration, inference time would be expected to drop below 100 ms, enabling a hop interval reduction to 0.5 seconds for more responsive updates.
 
 ---
 
