@@ -47,4 +47,4 @@ The emotion model uses **wav2vec2-base-superb-er** fine-tuned on the **IEMOCAP**
 
 - Speak normally for ~6 seconds at startup to calibrate your personal stress baseline
 - GPU is used automatically if available (CUDA), otherwise runs on CPU
-- The deception likelihood score is a voice stress indicator only — not a validated lie detector
+- The deception likelihood score is a voice stress indicator only; cannot be used for accurate lie detection
