@@ -1,155 +1,25 @@
+"""
+CLI mode — prints a live ASCII dashboard to the terminal.
+
+Usage:
+    python emotion_recognition.py
+    python emotion_recognition.py --device 1
+    python emotion_recognition.py --file path/to/audio.wav
+"""
+
+import argparse
 import time
-import threading
-from collections import deque
 
 import numpy as np
-import torch
-import librosa
-import sounddevice as sd
-from transformers import pipeline
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-MODEL_ID        = "superb/wav2vec2-base-superb-er"
-SAMPLE_RATE     = 16_000
-WINDOW_SEC      = 3
-HOP_SEC         = 1
-SILENCE_RMS     = 0.0002
-CALIBRATION_N   = 6    # chunks needed before stress scores activate (~6s)
-
-EMOTION_EMOJI = {
-    "ang": "😠", "hap": "😊", "neu": "😐", "sad": "😢",
-    "angry": "😠", "happy": "😊", "neutral": "😐",
-}
-
-LABEL_EXPAND = {
-    "ang": "angry", "hap": "happy", "neu": "neutral", "sad": "sad",
-}
-
-# ---------------------------------------------------------------------------
-# Emotion model
-# ---------------------------------------------------------------------------
-def load_model():
-    print("Loading emotion model (first run downloads ~1 GB)...")
-    device = 0 if torch.cuda.is_available() else -1
-    clf = pipeline("audio-classification", model=MODEL_ID, device=device)
-    label = f"GPU (cuda:{device})" if device >= 0 else "CPU"
-    print(f"Model ready on {label}.")
-    print(f"This model is using the IEMOCAP dataset (Interactive Emotional Dyadic Motion Capture).\n")
-    return clf
-
-def classify_emotions(clf, audio: np.ndarray) -> list[dict]:
-    results = clf(audio, top_k=None)
-    results.sort(key=lambda x: x["score"], reverse=True)
-    return results
+from core.audio import AudioStream, analyze_file, is_silence
+from core.config import CALIBRATION_N, LABEL_EXPAND, SAMPLE_RATE, WINDOW_SEC, HOP_SEC
+from core.model import classify, load_model, smooth_emotions
+from core.stress import StressAnalyzer
 
 
-# ---------------------------------------------------------------------------
-# Stress / deception indicator (acoustic feature analysis)
-# ---------------------------------------------------------------------------
-class StressAnalyzer:
-    """
-    Computes voice stress indicators from acoustic features.
-    Requires a short personal calibration period before scoring.
+# ── ASCII rendering ──────────────────────────────────────────────────── #
 
-    Features tracked:
-      - Pitch elevation  : mean F0 higher than your own baseline → tension
-      - Voice tremor     : jitter (F0 micro-variation) → nervousness
-      - Amplitude tremor : shimmer (amplitude micro-variation) → stress
-      - Speech hesitation: change in pause ratio → cognitive load
-    """
-
-    WEIGHTS = {
-        "pitch_elevation":   0.30,
-        "voice_tremor":      0.30,
-        "amplitude_tremor":  0.20,
-        "speech_hesitation": 0.20,
-    }
-
-    def __init__(self):
-        self._cal_buffer: list[dict] = []
-        self.baseline: dict | None = None
-
-    # ---- feature extraction ------------------------------------------------
-    def _extract(self, audio: np.ndarray) -> dict | None:
-        # Pitch via YIN
-        f0 = librosa.yin(audio, fmin=60, fmax=500, sr=SAMPLE_RATE)
-        voiced = f0[f0 > 60]  # filter unvoiced frames
-        if len(voiced) < 20:
-            return None  # not enough speech
-
-        mean_pitch = float(np.mean(voiced))
-        jitter     = float(np.mean(np.abs(np.diff(voiced))) / mean_pitch) if mean_pitch else 0.0
-
-        # Shimmer via RMS frames
-        rms = librosa.feature.rms(y=audio, frame_length=512, hop_length=256)[0]
-        rms_v = rms[rms > 0]
-        shimmer = float(np.mean(np.abs(np.diff(rms_v))) / np.mean(rms_v)) if len(rms_v) > 1 else 0.0
-
-        # Pause ratio: fraction of frames below silence threshold
-        pause_ratio = float(np.sum(rms < SILENCE_RMS) / len(rms))
-
-        return {
-            "mean_pitch":  mean_pitch,
-            "jitter":      jitter,
-            "shimmer":     shimmer,
-            "pause_ratio": pause_ratio,
-        }
-
-    # ---- calibration -------------------------------------------------------
-    @property
-    def calibrated(self) -> bool:
-        return self.baseline is not None
-
-    @property
-    def calibration_progress(self) -> int:
-        return min(len(self._cal_buffer), CALIBRATION_N)
-
-    def _calibrate(self, feats: dict):
-        self._cal_buffer.append(feats)
-        if len(self._cal_buffer) >= CALIBRATION_N:
-            self.baseline = {
-                k: float(np.mean([c[k] for c in self._cal_buffer]))
-                for k in feats
-            }
-
-    # ---- scoring -----------------------------------------------------------
-    def _ratio_score(self, current, baseline, scale=2.0) -> float:
-        if baseline == 0:
-            return 0.0
-        return float(np.clip((current / baseline - 1.0) / scale, 0.0, 1.0))
-
-    def analyze(self, audio: np.ndarray) -> dict | None:
-        feats = self._extract(audio)
-        if feats is None:
-            return None
-
-        if not self.calibrated:
-            self._calibrate(feats)
-            return None
-
-        b = self.baseline
-        scores = {
-            "pitch_elevation":   self._ratio_score(feats["mean_pitch"],  b["mean_pitch"],  scale=0.5),
-            "voice_tremor":      self._ratio_score(feats["jitter"],      b["jitter"],      scale=2.0),
-            "amplitude_tremor":  self._ratio_score(feats["shimmer"],     b["shimmer"],     scale=2.0),
-            "speech_hesitation": float(np.clip(abs(feats["pause_ratio"] - b["pause_ratio"]) * 4.0, 0.0, 1.0)),
-        }
-        overall = sum(scores[k] * self.WEIGHTS[k] for k in self.WEIGHTS)
-        scores["overall"] = float(overall)
-        return scores
-
-    def verdict(self, overall: float) -> str:
-        if overall < 0.25: return "LOW"
-        if overall < 0.50: return "MODERATE"
-        if overall < 0.75: return "HIGH"
-        return "VERY HIGH"
-
-
-# ---------------------------------------------------------------------------
-# Display helpers
-# ---------------------------------------------------------------------------
 BAR = 26
 
 def _bar(score: float) -> str:
@@ -169,22 +39,16 @@ def _clear_prev():
 
 def _print_block(lines: list[str]):
     global _last_lines
-    text = "\n".join(lines)
-    print(text)
+    print("\n".join(lines))
     _last_lines = len(lines)
 
 
-# ---------------------------------------------------------------------------
-# Render
-# ---------------------------------------------------------------------------
-def render(emotions: list[dict], stress: dict | None, cal_progress: int, ts: str):
-    W = 52
+def render(emotions: list[dict], stress: dict | None, cal_progress: int, ts: str) -> list[str]:
+    W = 54
     lines = []
-
-    # ── Emotion block ────────────────────────────────────────────
-    lines.append(f"┌{'─'*W}┐")
-    lines.append(f"│  Emotion Analysis  {ts:<32}│")
-    lines.append(f"├{'─'*W}┤")
+    lines.append(f"┌{'─' * W}┐")
+    lines.append(f"│  Emotion Analysis  {ts:<34}│")
+    lines.append(f"├{'─' * W}┤")
     for e in emotions:
         raw   = e["label"]
         lbl   = LABEL_EXPAND.get(raw, raw)
@@ -192,20 +56,17 @@ def render(emotions: list[dict], stress: dict | None, cal_progress: int, ts: str
         lines.append(f"│  {lbl:<9s} [{_bar(score)}] {_pct(score)} │")
     top     = emotions[0]
     top_lbl = LABEL_EXPAND.get(top["label"], top["label"]).upper()
-    lines.append(f"├{'─'*W}┤")
-    lines.append(f"│  Emotion → {top_lbl:<15s} ({_pct(top['score'])})           │")
-    lines.append(f"└{'─'*W}┘")
+    lines.append(f"├{'─' * W}┤")
+    lines.append(f"│  Dominant → {top_lbl:<10s} ({_pct(top['score'])})             │")
+    lines.append(f"└{'─' * W}┘")
 
-    # ── Stress block ─────────────────────────────────────────────
     lines.append("")
-    lines.append(f"┌{'─'*W}┐")
-    lines.append(f"│  Voice Stress Indicators{' '*27}│")
-    lines.append(f"├{'─'*W}┤")
-
+    lines.append(f"┌{'─' * W}┐")
+    lines.append(f"│  Voice Stress Indicators{' ' * 29}│")
+    lines.append(f"├{'─' * W}┤")
     if stress is None:
         prog = f"{cal_progress}/{CALIBRATION_N}"
-        lines.append(f"│  Calibrating personal baseline... {prog:<17}│")
-        lines.append(f"│  (keep speaking normally for a few seconds){' '*8}│")
+        lines.append(f"│  Calibrating… {prog:<10} (keep speaking normally){' ' * 6}│")
     else:
         labels = {
             "pitch_elevation":   "Pitch elevation ",
@@ -214,71 +75,107 @@ def render(emotions: list[dict], stress: dict | None, cal_progress: int, ts: str
             "speech_hesitation": "Hesitation      ",
         }
         for key, lbl in labels.items():
-            s = stress[key]
+            s = stress.get(key, 0.0)
             lines.append(f"│  {lbl} [{_bar(s)}] {_pct(s)} │")
-
-        overall  = stress["overall"]
-        verdict  = StressAnalyzer().verdict(overall)   # stateless call
-        lines.append(f"├{'─'*W}┤")
-        lines.append(f"│  Deception likelihood → {verdict:<10s} ({_pct(overall)})     │")
-        lines.append(f"├{'─'*W}┤")
-        lines.append(f"│  * not accurate, just a fun feature :){' '*13}│")
-
-    lines.append(f"└{'─'*W}┘")
+        overall = stress["overall"]
+        label, _ = StressAnalyzer.verdict(overall)
+        lines.append(f"├{'─' * W}┤")
+        lines.append(f"│  Stress level → {label:<10s} ({_pct(overall)})           │")
+        lines.append(f"├{'─' * W}┤")
+        lines.append(f"│  * deception score is just for fun :){' ' * 17}│")
+    lines.append(f"└{'─' * W}┘")
     return lines
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-def main():
-    clf      = load_model()
+# ── File analysis ────────────────────────────────────────────────────── #
+
+def run_file(path: str):
+    print("Loading model…")
+    clf = load_model()
     analyzer = StressAnalyzer()
 
-    window_size = SAMPLE_RATE * WINDOW_SEC
-    buffer: deque = deque(maxlen=window_size)
-    lock   = threading.Lock()
+    audio = analyze_file(path)
+    hop   = SAMPLE_RATE * 3
+    n     = len(audio)
+    segs  = max(1, n // hop)
 
-    def audio_callback(indata, frames, time_info, status):
-        if status:
-            print(f"[audio] {status}")
-        with lock:
-            buffer.extend(indata[:, 0].tolist())
+    print(f"Analyzing {path}  ({n / SAMPLE_RATE:.1f}s, {segs} segments)\n")
 
-    print(f"Listening on microphone  (window={WINDOW_SEC}s, hop={HOP_SEC}s)")
-    print("Speak normally for ~6 seconds first to calibrate your stress baseline.")
+    all_emotions: list[dict] = []
+    prev = None
+    for i in range(segs):
+        chunk = audio[i * hop: (i + 1) * hop]
+        if len(chunk) < hop:
+            chunk = np.pad(chunk, (0, hop - len(chunk)))
+        emos = classify(clf, chunk)
+        emos = smooth_emotions(prev, emos)
+        prev = {"raw": emos}
+        analyzer.analyze(chunk)
+        all_emotions.append({e["label"]: e["score"] for e in emos})
+        ts   = f"{i * 3:.0f}s–{(i + 1) * 3:.0f}s"
+        top  = emos[0]
+        print(f"  [{ts:>8}]  {LABEL_EXPAND.get(top['label'], top['label']):<8} {top['score'] * 100:.1f}%")
+
+    avg: dict[str, float] = {}
+    for label in all_emotions[0]:
+        avg[label] = float(np.mean([s.get(label, 0) for s in all_emotions]))
+
+    top_lbl = max(avg, key=avg.get)
+    print(f"\nDominant emotion: {LABEL_EXPAND.get(top_lbl, top_lbl).upper()}  ({avg[top_lbl] * 100:.1f}%)")
+    for k, v in sorted(avg.items(), key=lambda x: -x[1]):
+        print(f"  {LABEL_EXPAND.get(k, k):<9}: {v * 100:.1f}%")
+
+
+# ── Live mode ────────────────────────────────────────────────────────── #
+
+def run_live(device: int | None):
+    print("Loading model…")
+    clf      = load_model()
+    analyzer = StressAnalyzer()
+    stream   = AudioStream(device=device)
+    prev     = None
+
+    print(f"Listening (window={WINDOW_SEC}s, hop={HOP_SEC}s)")
+    print("Speak normally for ~6 seconds to calibrate your stress baseline.")
     print("Press Ctrl+C to stop.\n")
 
-    with sd.InputStream(samplerate=SAMPLE_RATE, channels=1,
-                        dtype="float32", callback=audio_callback):
+    stream.start()
+    try:
         while True:
             time.sleep(HOP_SEC)
-
-            with lock:
-                if len(buffer) < window_size:
-                    remaining = (window_size - len(buffer)) / SAMPLE_RATE
-                    print(f"\rBuffering... {remaining:.1f}s ", end="", flush=True)
-                    continue
-                audio = np.array(buffer, dtype=np.float32)
-
-            rms = np.sqrt(np.mean(audio ** 2))
-            if rms < SILENCE_RMS:
-                print(f"\r[silence — mic RMS: {rms:.5f}, threshold: {SILENCE_RMS}]  ", end="", flush=True)
+            audio, ratio = stream.get_audio()
+            if audio is None:
+                print(f"\rBuffering… {ratio * 100:.0f}% ", end="", flush=True)
+                continue
+            if is_silence(audio):
+                rms = float(np.sqrt(np.mean(audio ** 2)))
+                print(f"\r[silence — RMS {rms:.5f}]  ", end="", flush=True)
                 continue
 
-            # Run both analyses
-            emotions = classify_emotions(clf, audio)
+            emotions = classify(clf, audio)
+            emotions = smooth_emotions(prev, emotions)
+            prev     = {"raw": emotions}
             stress   = analyzer.analyze(audio)
-
-            ts    = time.strftime("%H:%M:%S")
-            lines = render(emotions, stress, analyzer.calibration_progress, ts)
+            ts       = time.strftime("%H:%M:%S")
 
             _clear_prev()
-            _print_block(lines)
-
-
-if __name__ == "__main__":
-    try:
-        main()
+            _print_block(render(emotions, stress, analyzer.calibration_progress, ts))
     except KeyboardInterrupt:
         print("\n\nStopped.")
+    finally:
+        stream.stop()
+
+
+# ── Entry point ─────────────────────────────────────────────────────── #
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Voice Emotion Analyzer — CLI")
+    parser.add_argument("--file",   "-f", type=str, help="Path to audio file to analyze")
+    parser.add_argument("--device", "-d", type=int, default=None,
+                        help="Mic device index (see sounddevice.query_devices())")
+    args = parser.parse_args()
+
+    if args.file:
+        run_file(args.file)
+    else:
+        run_live(args.device)
