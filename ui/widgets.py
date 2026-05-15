@@ -58,14 +58,14 @@ class WaveformCanvas(tk.Canvas):
             bg=SURFACE2, highlightthickness=0,
             **kw,
         )
-        self._w = width
+        self._width = width
         self._mid = WAVE_H // 2
         self._line_id = None
         self._draw_baseline()
 
     def _draw_baseline(self):
         self.create_line(
-            CANVAS_PAD, self._mid, self._w - CANVAS_PAD, self._mid,
+            CANVAS_PAD, self._mid, self._width - CANVAS_PAD, self._mid,
             fill=BORDER, width=1, dash=(4, 4),
         )
 
@@ -75,7 +75,7 @@ class WaveformCanvas(tk.Canvas):
         if n < 2:
             return
 
-        x_step = (self._w - 2 * CANVAS_PAD) / (n - 1)
+        x_step = (self._width - 2 * CANVAS_PAD) / (n - 1)
         amplitude = (WAVE_H // 2) - 4
 
         coords = []
@@ -110,7 +110,7 @@ class TimelineCanvas(tk.Canvas):
             bg=SURFACE2, highlightthickness=0,
             **kw,
         )
-        self._w   = width
+        self._width = width
         self._cw  = width - self._LABEL_W - CANVAS_PAD   # chart area width
         self._ch  = TIMELINE_H - self._AXIS_H - 4        # chart area height
         self._ox  = self._LABEL_W                        # chart origin x
