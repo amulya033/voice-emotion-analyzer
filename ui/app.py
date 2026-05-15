@@ -478,7 +478,7 @@ class App(tk.Tk):
                 self._set_status(f"Waiting for speech…  RMS {rms:.5f}")
                 continue
 
-            emotions = classify(clf, audio)
+            emotions = classify(self._clf, audio)
             emotions = smooth_emotions(self._prev_emo, emotions)
             self._prev_emo = {"raw": emotions}
 
@@ -616,7 +616,7 @@ class App(tk.Tk):
                     chunk = audio[i * hop: (i + 1) * hop]
                     if len(chunk) < hop:
                         chunk = np.pad(chunk, (0, hop - len(chunk)))
-                    emos = classify(clf, chunk)
+                    emos = classify(self._clf, chunk)
                     emos = smooth_emotions(prev, emos)
                     prev = {"raw": emos}
                     analyzer.analyze(chunk)
