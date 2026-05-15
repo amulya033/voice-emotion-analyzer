@@ -13,9 +13,9 @@ _WAVEFORM_SAMPLES = 800  # display resolution for live waveform
 class AudioStream:
     """Continuous microphone capture with thread-safe audio buffer."""
 
-    def __init__(self, device: int | None = None):
+    def __init__(self, device: int | None = None, window_sec: int = WINDOW_SEC):
         self.device = device
-        self._window = SAMPLE_RATE * WINDOW_SEC
+        self._window = SAMPLE_RATE * window_sec
         self._buf: deque = deque(maxlen=self._window)
         self._lock = threading.Lock()
         self._stream: sd.InputStream | None = None
@@ -91,5 +91,5 @@ def analyze_file(path: str) -> np.ndarray:
     return audio
 
 
-def is_silence(audio: np.ndarray) -> bool:
-    return float(np.sqrt(np.mean(audio ** 2))) < SILENCE_RMS
+def is_silence(audio: np.ndarray, threshold: float = SILENCE_RMS) -> bool:
+    return float(np.sqrt(np.mean(audio ** 2))) < threshold

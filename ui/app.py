@@ -72,9 +72,15 @@ class App(tk.Tk):
         self._prev_emo   = None           # for EMA smoothing
         self._session    = SessionRecorder()
         self._stream: AudioStream | None = None
+        self._clf        = None           # shared model reference
+
+        # Settings vars (created before _build_ui so sliders can bind to them)
+        self._window_sec_var  = tk.IntVar(value=WINDOW_SEC)
+        self._sensitivity_var = tk.IntVar(value=5)   # 1 = very sensitive, 10 = less
 
         # Build UI then start
         self._build_ui()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._start_analysis()
 
     # ================================================================== #
@@ -288,12 +294,71 @@ class App(tk.Tk):
         device_menu.pack(anchor="w", pady=(4, 0))
 
         tk.Frame(mic_sec, bg=BORDER, height=1).pack(fill="x", pady=8)
-        note = tk.Label(
+        tk.Label(
             mic_sec,
             text="Restart analysis (Stop → Start) after changing the device.",
             bg=SURFACE, fg=SUBTEXT, font=FONT_SMALL,
+        ).pack(anchor="w")
+
+        # ── Analysis parameters ──────────────────────────────────── #
+        params_sec = _section_frame(tab, "ANALYSIS PARAMETERS")
+
+        # Window size
+        def _slider_row(parent, label, description):
+            tk.Label(parent, text=label, bg=SURFACE, fg=TEXT,
+                     font=FONT_BODY).pack(anchor="w")
+            tk.Label(parent, text=description, bg=SURFACE, fg=SUBTEXT,
+                     font=FONT_SMALL).pack(anchor="w")
+            row = tk.Frame(parent, bg=SURFACE)
+            row.pack(fill="x", pady=(4, 10))
+            return row
+
+        win_row = _slider_row(
+            params_sec,
+            "Analysis window",
+            "How many seconds of audio to analyze per hop. "
+            "Longer = more accurate but slower to react.",
         )
-        note.pack(anchor="w")
+        self._win_val_lbl = tk.Label(win_row, text=f"{WINDOW_SEC}s",
+                                     width=4, anchor="e", bg=SURFACE, fg=ACCENT,
+                                     font=FONT_BODY)
+        self._win_val_lbl.pack(side="right")
+        tk.Scale(
+            win_row, from_=2, to=6, orient="horizontal",
+            variable=self._window_sec_var,
+            bg=SURFACE, fg=TEXT, troughcolor=BORDER,
+            activebackground=ACCENT, highlightthickness=0, showvalue=False,
+            command=lambda v: self._win_val_lbl.config(text=f"{int(float(v))}s"),
+        ).pack(side="left", fill="x", expand=True)
+
+        sens_row = _slider_row(
+            params_sec,
+            "Mic sensitivity",
+            "How sensitive the silence detector is. "
+            "Raise if background noise triggers false readings.",
+        )
+        _SENS_LABELS = ["", "Very High", "High", "High", "Medium", "Medium",
+                        "Low", "Low", "Very Low", "Very Low", "Very Low"]
+        self._sens_val_lbl = tk.Label(sens_row, text=_SENS_LABELS[5],
+                                      width=10, anchor="e", bg=SURFACE, fg=ACCENT,
+                                      font=FONT_BODY)
+        self._sens_val_lbl.pack(side="right")
+        tk.Scale(
+            sens_row, from_=1, to=10, orient="horizontal",
+            variable=self._sensitivity_var,
+            bg=SURFACE, fg=TEXT, troughcolor=BORDER,
+            activebackground=ACCENT, highlightthickness=0, showvalue=False,
+            command=lambda v: self._sens_val_lbl.config(
+                text=_SENS_LABELS[int(float(v))]
+            ),
+        ).pack(side="left", fill="x", expand=True)
+
+        tk.Frame(params_sec, bg=BORDER, height=1).pack(fill="x", pady=(0, 8))
+        _btn(params_sec, "  Apply & Restart  ", self._apply_settings,
+             bg=ACCENT).pack(anchor="w")
+        tk.Label(params_sec,
+                 text="Stops and restarts analysis with the new settings.",
+                 bg=SURFACE, fg=SUBTEXT, font=FONT_SMALL).pack(anchor="w", pady=(4, 0))
 
         # Model info
         model_sec = _section_frame(tab, "MODEL INFO")
@@ -381,11 +446,18 @@ class App(tk.Tk):
     def _run_loop(self):
         self._set_status("Loading model…")
 
-        selected = self._device_var.get()
-        dev_id   = int(selected.split(":")[0]) if selected else None
-        self._stream = AudioStream(device=dev_id)
+        # Read current settings before starting stream
+        selected    = self._device_var.get()
+        dev_id      = int(selected.split(":")[0]) if selected else None
+        window_sec  = self._window_sec_var.get()
+        sensitivity = self._sensitivity_var.get()
+        # Map 1–10 → 0.0001–0.001 (higher = less sensitive = louder threshold)
+        silence_rms = 0.0001 + (sensitivity - 1) * (0.0009 / 9)
 
-        clf      = load_model()
+        self._stream = AudioStream(device=dev_id, window_sec=window_sec)
+
+        if self._clf is None:
+            self._clf = load_model()
         analyzer = StressAnalyzer()
 
         self._set_status(
@@ -401,7 +473,7 @@ class App(tk.Tk):
                 self._set_status(f"Buffering… {ratio * 100:.0f}%")
                 continue
 
-            if is_silence(audio):
+            if is_silence(audio, threshold=silence_rms):
                 rms = float(np.sqrt(np.mean(audio ** 2)))
                 self._set_status(f"Waiting for speech…  RMS {rms:.5f}")
                 continue
@@ -512,6 +584,13 @@ class App(tk.Tk):
         )
 
     def _analyze_file(self):
+        if self._clf is None:
+            messagebox.showwarning(
+                "Model not ready",
+                "The model is still loading. Wait a moment and try again."
+            )
+            return
+
         path = filedialog.askopenfilename(
             title="Select audio file",
             filetypes=[("Audio files", "*.wav *.mp3 *.flac *.ogg *.m4a"), ("All files", "*.*")],
@@ -523,10 +602,8 @@ class App(tk.Tk):
 
         def _run():
             try:
-                from ..core.model import load_model, classify
-                from ..core.stress import StressAnalyzer
                 audio    = analyze_file(path)
-                clf      = load_model()
+                clf      = self._clf   # reuse already-loaded model
                 analyzer = StressAnalyzer()
 
                 hop   = SAMPLE_RATE * 3   # 3-second windows
@@ -587,6 +664,35 @@ class App(tk.Tk):
             path = os.path.join(sessions_dir, f)
             size = os.path.getsize(path)
             self._history_list.insert("end", f"  {f}  ({size // 1024} KB)")
+
+    def _apply_settings(self):
+        """Stop and restart analysis with the current slider values."""
+        if self._running:
+            self._running = False
+            self._status_dot.config(fg="#374151")
+            if self._stream:
+                self._stream.stop()
+        self._prev_emo = None
+        self._start_analysis()
+
+    def _on_close(self):
+        """Prompt to save unsaved session data before quitting."""
+        if self._session.count > 0:
+            result = messagebox.askyesnocancel(
+                "Save session?",
+                f"You recorded {self._session.count} samples "
+                f"({int(self._session.duration_seconds)}s).\n\n"
+                "Save session to JSON + CSV before closing?",
+            )
+            if result is None:    # Cancel — don't close
+                return
+            if result:            # Yes — save then close
+                self._save_session()
+        if self._running:
+            self._running = False
+            if self._stream:
+                self._stream.stop()
+        self.destroy()
 
     def _open_sessions_folder(self):
         import subprocess
