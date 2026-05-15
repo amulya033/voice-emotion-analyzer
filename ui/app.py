@@ -14,15 +14,15 @@ from .theme import (
     TEXT, WIN_W, WAVE_H, TIMELINE_H,
 )
 from .widgets import BarRow, TimelineCanvas, WaveformCanvas
-from ..core.audio import AudioStream, analyze_file, is_silence, list_input_devices
-from ..core.config import (
+from core.audio import AudioStream, analyze_file, is_silence, list_input_devices
+from core.config import (
     CALIBRATION_N, EMOTIONS, EMOTION_COLORS, HOP_SEC,
     LABEL_EXPAND, SAMPLE_RATE, STRESS_COLORS, STRESS_KEYS,
     STRESS_LABELS, WINDOW_SEC,
 )
-from ..core.model import classify, confidence_level, load_model, smooth_emotions
-from ..core.session import SessionRecorder
-from ..core.stress import StressAnalyzer
+from core.model import classify, confidence_level, load_model, smooth_emotions
+from core.session import SessionRecorder
+from core.stress import StressAnalyzer
 
 
 # ═══════════════════════════════════════════════════════════════════════ #

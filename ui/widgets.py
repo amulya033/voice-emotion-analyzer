@@ -10,7 +10,7 @@ from .theme import (
     WAVE_H, TIMELINE_H, CANVAS_PAD,
     FONT_BODY, FONT_SMALL,
 )
-from ..core.config import EMOTIONS, EMOTION_COLORS, LABEL_EXPAND, TIMELINE_SECS
+from core.config import EMOTIONS, EMOTION_COLORS, LABEL_EXPAND, TIMELINE_SECS
 
 
 # ═══════════════════════════════════════════════════════════════════════ #
